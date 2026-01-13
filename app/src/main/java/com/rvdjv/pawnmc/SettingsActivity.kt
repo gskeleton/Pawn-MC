@@ -1,0 +1,221 @@
+package com.rvdjv.pawnmc
+
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import android.os.Environment
+import android.provider.DocumentsContract
+import android.view.LayoutInflater
+import android.view.View
+import android.widget.ImageButton
+import android.widget.LinearLayout
+import android.widget.RadioGroup
+import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.appbar.MaterialToolbar
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.textfield.TextInputEditText
+
+class SettingsActivity : AppCompatActivity() {
+
+    private lateinit var config: CompilerConfig
+
+    private lateinit var rgOptimization: RadioGroup
+    private lateinit var rgDebug: RadioGroup
+    private lateinit var switchSemicolons: SwitchMaterial
+    private lateinit var switchParentheses: SwitchMaterial
+    private lateinit var switchSampCompat: SwitchMaterial
+    private lateinit var etCustomFlags: TextInputEditText
+    private lateinit var llIncludePaths: LinearLayout
+    private lateinit var tvEmptyPaths: TextView
+    private lateinit var btnAddIncludePath: MaterialButton
+
+    private val includePaths = mutableListOf<String>()
+
+    // Fflder picker
+    private val folderPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        uri?.let { handleSelectedFolder(it) }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_settings)
+
+        setupToolbar()
+        config = CompilerConfig(this)
+
+        initViews()
+        loadSettings()
+        setupListeners()
+    }
+
+    private fun setupToolbar() {
+        val toolbar = findViewById<MaterialToolbar>(R.id.toolbar)
+        toolbar.setNavigationOnClickListener {
+            config.customFlags = etCustomFlags.text?.toString() ?: ""
+            finish()
+        }
+    }
+
+    private fun initViews() {
+        rgOptimization = findViewById(R.id.rgOptimization)
+        rgDebug = findViewById(R.id.rgDebug)
+        switchSemicolons = findViewById(R.id.switchSemicolons)
+        switchParentheses = findViewById(R.id.switchParentheses)
+        switchSampCompat = findViewById(R.id.switchSampCompat)
+        etCustomFlags = findViewById(R.id.etCustomFlags)
+        llIncludePaths = findViewById(R.id.llIncludePaths)
+        tvEmptyPaths = findViewById(R.id.tvEmptyPaths)
+        btnAddIncludePath = findViewById(R.id.btnAddIncludePath)
+    }
+
+    private fun loadSettings() {
+        // optimization
+        when (config.optimization) {
+            CompilerConfig.OptimizationLevel.O0 -> rgOptimization.check(R.id.rbO0)
+            CompilerConfig.OptimizationLevel.O1 -> rgOptimization.check(R.id.rbO1)
+            CompilerConfig.OptimizationLevel.O2 -> rgOptimization.check(R.id.rbO2)
+        }
+
+        // debug
+        when (config.debugLevel) {
+            CompilerConfig.DebugLevel.D0 -> rgDebug.check(R.id.rbD0)
+            CompilerConfig.DebugLevel.D1 -> rgDebug.check(R.id.rbD1)
+            CompilerConfig.DebugLevel.D2 -> rgDebug.check(R.id.rbD2)
+            CompilerConfig.DebugLevel.D3 -> rgDebug.check(R.id.rbD3)
+        }
+
+        // switches
+        switchSemicolons.isChecked = config.mandatorySemicolons
+        switchParentheses.isChecked = config.mandatoryParentheses
+        switchSampCompat.isChecked = config.sampCompatibility
+
+        // custom flags
+        etCustomFlags.setText(config.customFlags)
+
+        // include paths
+        includePaths.clear()
+        includePaths.addAll(config.includePaths)
+        refreshIncludePathsUI()
+    }
+
+    private fun setupListeners() {
+        rgOptimization.setOnCheckedChangeListener { _, checkedId ->
+            config.optimization = when (checkedId) {
+                R.id.rbO0 -> CompilerConfig.OptimizationLevel.O0
+                R.id.rbO1 -> CompilerConfig.OptimizationLevel.O1
+                R.id.rbO2 -> CompilerConfig.OptimizationLevel.O2
+                else -> CompilerConfig.OptimizationLevel.O1
+            }
+        }
+
+        rgDebug.setOnCheckedChangeListener { _, checkedId ->
+            config.debugLevel = when (checkedId) {
+                R.id.rbD0 -> CompilerConfig.DebugLevel.D0
+                R.id.rbD1 -> CompilerConfig.DebugLevel.D1
+                R.id.rbD2 -> CompilerConfig.DebugLevel.D2
+                R.id.rbD3 -> CompilerConfig.DebugLevel.D3
+                else -> CompilerConfig.DebugLevel.D1
+            }
+        }
+
+        switchSemicolons.setOnCheckedChangeListener { _, isChecked ->
+            config.mandatorySemicolons = isChecked
+        }
+
+        switchParentheses.setOnCheckedChangeListener { _, isChecked ->
+            config.mandatoryParentheses = isChecked
+        }
+
+        switchSampCompat.setOnCheckedChangeListener { _, isChecked ->
+            config.sampCompatibility = isChecked
+        }
+
+        etCustomFlags.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) {
+                config.customFlags = etCustomFlags.text?.toString() ?: ""
+            }
+        }
+
+        btnAddIncludePath.setOnClickListener {
+            folderPickerLauncher.launch(null)
+        }
+    }
+
+    private fun handleSelectedFolder(uri: Uri) {
+        val path = getPathFromTreeUri(uri)
+        if (path != null && path !in includePaths) {
+            includePaths.add(path)
+            config.includePaths = includePaths
+            refreshIncludePathsUI()
+        }
+    }
+
+    private fun getPathFromTreeUri(uri: Uri): String? {
+        try {
+            val docId = DocumentsContract.getTreeDocumentId(uri)
+            if (docId.startsWith("primary:")) {
+                val relativePath = docId.removePrefix("primary:")
+                return "${Environment.getExternalStorageDirectory().absolutePath}/$relativePath"
+            }
+            if (docId.contains(":")) {
+                val parts = docId.split(":")
+                if (parts.size == 2) {
+                    val type = parts[0]
+                    val path = parts[1]
+
+                    when (type.lowercase()) {
+                        "home" -> return "${Environment.getExternalStorageDirectory().absolutePath}/$path"
+                        "downloads" -> return "${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath}/$path"
+                        "raw" -> return path
+                    }
+                    val externalDirs = getExternalFilesDirs(null)
+                    for (dir in externalDirs) {
+                        if (dir != null) {
+                            val root = dir.absolutePath.substringBefore("/Android")
+                            val testPath = "$root/$path"
+                            if (java.io.File(testPath).exists()) {
+                                return testPath
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) { }
+        return null
+    }
+
+    private fun refreshIncludePathsUI() {
+        llIncludePaths.removeAllViews()
+        // show/hide
+        if (includePaths.isEmpty()) {
+            tvEmptyPaths.visibility = View.VISIBLE
+        } else {
+            tvEmptyPaths.visibility = View.GONE
+        }
+
+        for (path in includePaths) {
+            val itemView = LayoutInflater.from(this)
+                .inflate(R.layout.item_include_path, llIncludePaths, false)
+
+            itemView.findViewById<TextView>(R.id.tvPath).text = path
+            itemView.findViewById<ImageButton>(R.id.btnRemove).setOnClickListener {
+                includePaths.remove(path)
+                config.includePaths = includePaths
+                refreshIncludePathsUI()
+            }
+
+            llIncludePaths.addView(itemView)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // save custom flags
+        config.customFlags = etCustomFlags.text?.toString() ?: ""
+    }
+}
